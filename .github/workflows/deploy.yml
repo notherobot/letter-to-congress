@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: ["main", "claude/**"]
+    branches: ["main", "claude/**", "gh-pages"]
   workflow_dispatch:
 
 permissions:
@@ -10,18 +10,46 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  # Step 1: Push site content to gh-pages branch (runs on feature/main branches)
+  push-to-gh-pages:
+    if: github.ref != 'refs/heads/gh-pages'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to gh-pages branch
+      - name: Push to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./
           publish_branch: gh-pages
           force_orphan: true
-          exclude_assets: '.github'
+
+  # Step 2: Deploy to GitHub Pages (runs on gh-pages branch)
+  deploy-pages:
+    if: github.ref == 'refs/heads/gh-pages'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
