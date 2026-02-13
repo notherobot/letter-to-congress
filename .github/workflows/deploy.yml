@@ -6,38 +6,75 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
-  actions: write
 
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  push-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Push to gh-pages branch
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./
-          publish_branch: gh-pages
-          force_orphan: true
-          exclude_assets: '.nope'
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
 
-      - name: Trigger deployment from gh-pages
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy via API
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.actions.createWorkflowDispatch({
+            const artifactName = 'github-pages';
+
+            // Find the artifact from this workflow run
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'pages-deploy.yml',
-              ref: 'gh-pages'
+              run_id: context.runId,
             });
+
+            const artifact = artifacts.data.artifacts.find(a => a.name === artifactName);
+            if (!artifact) {
+              throw new Error('No github-pages artifact found');
+            }
+
+            console.log(`Found artifact: ${artifact.id} (${artifact.size_in_bytes} bytes)`);
+
+            // Get OIDC token for Pages API
+            const idToken = await core.getIDToken();
+
+            // Create Pages deployment
+            const response = await github.request('POST /repos/{owner}/{repo}/pages/deployments', {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifact.id,
+              pages_build_version: context.sha,
+              oidc_token: idToken,
+            });
+
+            console.log('Deployment created:', JSON.stringify(response.data));
+
+            // Wait for deployment
+            const statusUrl = response.data.status_url;
+            for (let i = 0; i < 30; i++) {
+              await new Promise(r => setTimeout(r, 2000));
+              const status = await github.request('GET ' + statusUrl.replace('https://api.github.com', ''));
+              console.log(`Status: ${status.data.status}`);
+              if (status.data.status === 'succeed') {
+                console.log('Deployment succeeded!');
+                return;
+              }
+              if (status.data.status === 'deployment_failed') {
+                throw new Error('Deployment failed');
+              }
+            }
+            throw new Error('Deployment timed out');
