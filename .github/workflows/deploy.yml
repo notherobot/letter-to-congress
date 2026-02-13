@@ -30,6 +30,7 @@ jobs:
           publish_dir: ./
           publish_branch: gh-pages
           force_orphan: true
+          exclude_assets: '.nope'
 
   # Step 2: Deploy to GitHub Pages (runs on gh-pages branch)
   deploy-pages:
