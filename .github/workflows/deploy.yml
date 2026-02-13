@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -21,60 +21,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: '.'
-
-      - name: Deploy via API
+      - name: Configure Pages to deploy from gh-pages branch
         uses: actions/github-script@v7
         with:
           script: |
-            const artifactName = 'github-pages';
-
-            // Find the artifact from this workflow run
-            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-            });
-
-            const artifact = artifacts.data.artifacts.find(a => a.name === artifactName);
-            if (!artifact) {
-              throw new Error('No github-pages artifact found');
+            // Switch Pages source to "Deploy from a branch" -> gh-pages
+            try {
+              await github.request('PUT /repos/{owner}/{repo}/pages', {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                source: {
+                  branch: 'gh-pages',
+                  path: '/'
+                }
+              });
+              console.log('Pages source updated to deploy from gh-pages branch');
+            } catch (e) {
+              console.log('Pages config update error (may already be set):', e.message);
             }
 
-            console.log(`Found artifact: ${artifact.id} (${artifact.size_in_bytes} bytes)`);
-
-            // Get OIDC token for Pages API
-            const idToken = await core.getIDToken();
-
-            // Create Pages deployment
-            const response = await github.request('POST /repos/{owner}/{repo}/pages/deployments', {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              artifact_id: artifact.id,
-              pages_build_version: context.sha,
-              oidc_token: idToken,
-            });
-
-            console.log('Deployment created:', JSON.stringify(response.data));
-
-            // Wait for deployment
-            const statusUrl = response.data.status_url;
-            for (let i = 0; i < 30; i++) {
-              await new Promise(r => setTimeout(r, 2000));
-              const status = await github.request('GET ' + statusUrl.replace('https://api.github.com', ''));
-              console.log(`Status: ${status.data.status}`);
-              if (status.data.status === 'succeed') {
-                console.log('Deployment succeeded!');
-                return;
-              }
-              if (status.data.status === 'deployment_failed') {
-                throw new Error('Deployment failed');
-              }
-            }
-            throw new Error('Deployment timed out');
+      - name: Push to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./
+          publish_branch: gh-pages
+          force_orphan: true
